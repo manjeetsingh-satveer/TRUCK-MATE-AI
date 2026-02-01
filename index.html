@@ -1,0 +1,761 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>TruckMate — Demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --muted:#9aa4b2; --accent:#1d76ff; --text:#e6eef8;
+    }
+    html,body,#root{height:100%; margin:0; font-family:Inter,ui-sans-serif,system-ui,Arial;}
+    body{background:linear-gradient(180deg,#071028 0%, #071a2a 100%); color:var(--text);}
+    .app {max-width:1200px; margin:24px auto; padding:20px;}
+    .header {display:flex;align-items:center;justify-content:space-between;margin-bottom:18px;}
+    .card {background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:12px;padding:16px;margin-bottom:16px; box-shadow: 0 6px 18px rgba(2,6,23,0.6);}
+    .btn {background:var(--accent);border:none;color:white;padding:8px 12px;border-radius:8px;cursor:pointer;}
+    .btn.secondary {background:transparent;border:1px solid rgba(255,255,255,0.06);}
+    .grid {display:grid;grid-template-columns:1fr 340px; gap:16px;}
+    .list {max-height:480px;overflow:auto;}
+    .driver-row {display:flex;gap:12px; align-items:center;padding:10px;border-radius:8px;cursor:pointer;}
+    .driver-row:hover{background:rgba(255,255,255,0.01);}
+    .avatar {width:48px;height:48px;border-radius:8px;background:linear-gradient(120deg,#123 0,#345 100%);display:flex;align-items:center;justify-content:center;font-weight:700;}
+    .muted{color:var(--muted);font-size:0.9rem;}
+    .map-container {height:420px;border-radius:12px;overflow:hidden;border:1px solid rgba(255,255,255,0.04);}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:8px;text-align:left;border-bottom:1px dashed rgba(255,255,255,0.02);font-size:0.9rem}
+    input[type="file"]{color:transparent}
+    .small {font-size:0.85rem}
+    .modal-backdrop{position:fixed;inset:0;background:rgba(2,6,23,0.6);display:flex;align-items:center;justify-content:center;z-index:50}
+    .modal{width:520px;max-width:95%;border-radius:12px;padding:18px;background:linear-gradient(180deg,#081426,#061125)}
+    .form-row{display:flex;gap:8px;margin-bottom:10px}
+    .form-group{flex:1;display:flex;flex-direction:column}
+    .form-label{font-size:0.85rem;color:var(--muted);margin-bottom:6px}
+    .form-input, .form-select, textarea{padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:var(--text)}
+    .tiny {font-size:0.8rem;color:var(--muted);}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <div id="fallback-msg" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#071028;color:#e6eef8;padding:24px;z-index:9999">
+    <div style="max-width:720px">
+      <h2 style="margin:0 0 8px 0">Loading TruckMate…</h2>
+      <div style="opacity:0.85;line-height:1.45">
+        If this stays on screen, your browser is blocking the required CDN scripts (React/Babel/Leaflet) when opening the file directly.
+        <br/><br/>
+        <b>Fix:</b> run a local web server and open via <code>http://localhost</code> (not <code>file://</code>).
+        <br/>
+        <code>python -m http.server 8000</code>
+        <br/>
+        Then open: <code>http://localhost:8000/TruckMate-FULL-UPDATED.html</code>
+        <br/><br/>
+        If you need a version that works fully offline (no CDN), tell me and I will generate it.
+      </div>
+    </div>
+  </div>
+  <script>
+    // Hide fallback once React app mounts
+    (function(){
+      const t0 = Date.now();
+      function check(){
+        try{
+          if(window.React && document.querySelector('#root') && document.querySelector('#root').children.length){
+            const el = document.getElementById('fallback-msg');
+            if(el) el.remove();
+            return;
+          }
+        }catch(e){}
+        // also remove if root has content later
+        if(Date.now()-t0 < 15000) requestAnimationFrame(check);
+      }
+      requestAnimationFrame(check);
+    })();
+  </script>
+
+
+  <!-- React + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <script type="text/babel">
+  const { useState, useEffect, useRef } = React;
+
+  /**************************************************************************
+   * Mock data
+   **************************************************************************/
+  const nowIso = () => new Date().toISOString();
+  const mockDrivers = [
+    { id:'d1', name:'Aung Min', truckNumber:'TX-101', status:'ACTIVE', statusStartTime:null, lastLocation:null, profilePicture:null, idDocs:null, locationSharing:false },
+    { id:'d2', name:'Su Lin', truckNumber:'TX-202', status:'OFF_DUTY', statusStartTime:null, lastLocation:null, profilePicture:null, idDocs:null, locationSharing:false },
+    { id:'d3', name:'Ko Zaw', truckNumber:'TX-303', status:'ACTIVE', statusStartTime:null, lastLocation:null, profilePicture:null, idDocs:null, locationSharing:false },
+  ];
+  const initialLoads = [
+    { id:'L1', title:'Load A', assignedDriverId:null, schedule:null },
+    { id:'L2', title:'Load B', assignedDriverId:'d2', schedule:{when: nowIso()} }
+  ];
+
+  /**************************************************************************
+   * Helpers
+   **************************************************************************/
+  // Read file to dataURL
+  function fileToDataUrl(file){ return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result);
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });}
+
+  /**************************************************************************
+   * Simple demo face-match: average color difference heuristic (demo only)
+   **************************************************************************/
+  async function compareImagesDemo(dataUrlA, dataUrlB){
+    // If missing return false
+    if(!dataUrlA || !dataUrlB) return false;
+    const loadImage = (src) => new Promise((res, rej) => {
+      const img = new Image();
+      img.crossOrigin = "Anonymous";
+      img.onload = () => res(img);
+      img.onerror = rej;
+      img.src = src;
+    });
+    try {
+      const [imgA, imgB] = await Promise.all([loadImage(dataUrlA), loadImage(dataUrlB)]);
+      const c = document.createElement('canvas');
+      c.width = c.height = 32;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(imgA,0,0,32,32);
+      const dA = ctx.getImageData(0,0,32,32).data;
+      ctx.clearRect(0,0,32,32);
+      ctx.drawImage(imgB,0,0,32,32);
+      const dB = ctx.getImageData(0,0,32,32).data;
+      const avg = (arr) => {
+        let r=0,g=0,b=0; const len = arr.length/4;
+        for(let i=0;i<arr.length;i+=4){ r+=arr[i]; g+=arr[i+1]; b+=arr[i+2]; }
+        return [r/len, g/len, b/len];
+      };
+      const [ar,ag,ab] = avg(dA), [br,bg,bb] = avg(dB);
+      const dist = Math.sqrt((ar-br)**2 + (ag-bg)**2 + (ab-bb)**2);
+      return dist < 60;
+    } catch(e){
+      console.warn('compareImagesDemo error', e);
+      return false;
+    }
+  }
+
+  /**************************************************************************
+   * App
+   **************************************************************************/
+  function App(){
+    // central app state
+    const [drivers, setDrivers] = useState(mockDrivers);
+    const [loads, setLoads] = useState(initialLoads);
+    const [documents, setDocuments] = useState([]); // central doc store
+    const markerLayerRef = useRef(null);
+
+    // UI state
+    const [selectedDriverId, setSelectedDriverId] = useState(drivers[0].id);
+    const [view, setView] = useState('admin'); // 'admin' or 'driver'
+    const [currentUserId, setCurrentUserId] = useState('d1'); // simulate login
+    const [showAssignModal, setShowAssignModal] = useState(false);
+    const [showScheduleModal, setShowScheduleModal] = useState(false);
+    const [showUploadModal, setShowUploadModal] = useState(false);
+
+    // Central helpers
+    const addDocument = (doc) => {
+      setDocuments(prev => [{ id:`doc-${Date.now()}`, createdAt: new Date().toISOString(), ...doc }, ...prev]);
+    };
+
+    const updateDriverProfile = (driverId, updates) => {
+      setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, ...updates } : d));
+      if (updates.idDocs) {
+        const doc = {
+          type: 'DRIVER_ID',
+          driverId,
+          front: updates.idDocs.front || null,
+          back: updates.idDocs.back || null,
+          profilePicture: updates.profilePicture || null,
+          note: 'Driver uploaded ID'
+        };
+        addDocument(doc);
+      }
+    };
+
+    const updateDriverLocation = (driverId, location) => {
+      setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, lastLocation: location, locationSharing: true } : d));
+    };
+    const stopDriverLocation = (driverId) => {
+      setDrivers(prev => prev.map(d => d.id === driverId ? { ...d, locationSharing: false } : d));
+    };
+
+    // wire select
+    useEffect(()=> {
+      if (!drivers.find(d => d.id === selectedDriverId)) {
+        setSelectedDriverId(drivers[0]?.id || null);
+      }
+    }, [drivers]);
+
+    // simple simulated location updates for demonstration (only when driver has enabled sharing)
+    useEffect(() => {
+      const interval = setInterval(() => {
+        setDrivers(prev => prev.map(d => {
+          if (d.locationSharing && d.lastLocation) {
+            // move a little
+            const jitter = (Math.random()-0.5)/100;
+            return { ...d, lastLocation:{ lat: d.lastLocation.lat + jitter, lng: d.lastLocation.lng + jitter } };
+          }
+          return d;
+        }));
+      }, 6000);
+      return () => clearInterval(interval);
+    }, []);
+
+    // driver-only view uses currentUserId
+    const currentDriver = drivers.find(d => d.id === currentUserId) || drivers[0];
+    const selectedDriver = drivers.find(d => d.id === selectedDriverId) || drivers[0];
+
+    return (
+      <div className="app">
+        <div className="header">
+          <div>
+            <h2 style={{margin:0}}>TruckMate — Admin / Driver Demo</h2>
+            <div className="tiny muted">Demo: driver status, ID upload, face-match (demo), and live map</div>
+          </div>
+          <div style={{display:'flex',gap:8,alignItems:'center'}}>
+            <select className="form-select" value={view} onChange={e=>setView(e.target.value)} style={{padding:8,borderRadius:8,background:'transparent',border:'1px solid rgba(255,255,255,0.04)',color:'var(--text)'}}>
+              <option value="admin">Admin View</option>
+              <option value="driver">Driver View</option>
+            </select>
+            <button className="btn" onClick={()=>setShowUploadModal(true)}>Upload Document</button>
+            <button className="btn secondary" onClick={()=>{
+              const nextIndex = (drivers.findIndex(d=>d.id===currentUserId)+1)%drivers.length;
+              setCurrentUserId(drivers[nextIndex].id);
+            }}>Switch User</button>
+          </div>
+        </div>
+
+        {view === 'driver' ? (
+          <div className="grid" style={{gridTemplateColumns:'1fr'}}>
+            <div className="card">
+              <strong>Driver Dashboard</strong>
+              <div className="muted small" style={{marginTop:6}}>Logged in as: <b>{currentDriver.name}</b> ({currentDriver.truckNumber})</div>
+              <div style={{marginTop:12}}>
+                <DriverProfileView
+                  driver={currentDriver}
+                  editing={true}
+                  onUpdate={(updates) => { updateDriverProfile(currentDriver.id, updates); alert('Profile updated'); }}
+                  onLocationUpdate={(loc) => updateDriverLocation(currentDriver.id, loc)}
+                  onStopLocation={() => stopDriverLocation(currentDriver.id)}
+                />
+              </div>
+            </div>
+
+            <div className="card">
+              <strong>Live Map</strong>
+              <div className="muted small" style={{marginTop:6}}>You will appear on the map after you start sharing location.</div>
+              <div style={{marginTop:12}}>
+                <LiveTracking drivers={drivers} markerLayerRef={markerLayerRef} mapHeight={420} />
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div className="grid">
+            <div>
+              <div className="card">
+                <strong>Drivers</strong>
+                <div className="list" style={{marginTop:12}}>
+                  {drivers.map(d => (
+                    <div key={d.id} className="driver-row" onClick={()=>{ setSelectedDriverId(d.id); }}>
+                      <div className="avatar">{d.name.split(' ').map(n=>n[0]).slice(0,2).join('')}</div>
+                      <div style={{flex:1}}>
+                        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+                          <div>
+                            <div style={{fontWeight:700}}>{d.name} <span className="muted">• {d.truckNumber}</span></div>
+                            <div className="muted small">Status: {d.status} {d.statusStartTime ? `• since ${new Date(d.statusStartTime).toLocaleString()}` : ''}</div>
+                          </div>
+                          <div className="tiny muted">{d.locationSharing ? 'Sharing location' : 'Not sharing'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="card" style={{marginTop:8}}>
+                <strong>Live Map</strong>
+                <div style={{marginTop:12}}>
+                  <LiveTracking drivers={drivers} markerLayerRef={markerLayerRef} mapHeight={420} />
+                </div>
+              </div>
+
+              <div className="card" style={{marginTop:8}}>
+                <strong>Loads</strong>
+                <table style={{marginTop:12}}>
+                  <thead><tr><th>Load</th><th>Driver</th><th>Schedule</th><th>Actions</th></tr></thead>
+                  <tbody>
+                    {loads.map(l => (
+                      <tr key={l.id}>
+                        <td>{l.title}</td>
+                        <td>{drivers.find(d=>d.id===l.assignedDriverId)?.name || '—'}</td>
+                        <td>{l.schedule ? new Date(l.schedule.when).toLocaleString() : 'Unscheduled'}</td>
+                        <td>
+                          <button className="btn secondary" onClick={()=>{ setShowAssignModal(true); }}>Assign</button>
+                          <button className="btn secondary" onClick={()=>{ setShowScheduleModal(true); }}>Schedule</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+            </div>
+
+            <div>
+              <div className="card" style={{marginBottom:12}}>
+                <strong>Selected</strong>
+                <div style={{marginTop:12}}>
+                  <div className="muted">Currently selected driver:</div>
+                  <h3>{selectedDriver?.name || '—'}</h3>
+                  <div style={{display:'flex',gap:8,marginTop:10}}>
+                    <button className="btn" onClick={()=>setShowAssignModal(true)}>Assign Load</button>
+                    <button className="btn secondary" onClick={()=>setShowScheduleModal(true)}>Add Schedule</button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="card">
+                <strong>Profile / Manage Driver</strong>
+                <div style={{marginTop:12}}>
+                  <DriverProfileView
+                    driver={selectedDriver}
+                    editing={true}
+                    onUpdate={(updates) => { updateDriverProfile(selectedDriver.id, updates); alert('Profile updated'); }}
+                    onLocationUpdate={(loc) => updateDriverLocation(selectedDriver.id, loc)}
+                    onStopLocation={() => stopDriverLocation(selectedDriver.id)}
+                  />
+                </div>
+              </div>
+
+              <div className="card" style={{marginTop:12}}>
+                <strong>Recent Documents</strong>
+                <div style={{marginTop:12}}>
+                  {documents.length === 0 ? <div className="muted">No documents yet</div> : (
+                    <table>
+                      <thead><tr><th>Type</th><th>Driver</th><th>Uploaded</th><th>Preview</th></tr></thead>
+                      <tbody>
+                        {documents.slice(0,8).map(d => (
+                          <tr key={d.id}>
+                            <td>{d.type}</td>
+                            <td>{drivers.find(x=>x.id===d.driverId)?.name || '—'}</td>
+                            <td>{new Date(d.createdAt).toLocaleString()}</td>
+                            <td>
+                              {d.front ? <img src={d.front} style={{maxWidth:120,borderRadius:6}} alt="front"/> :
+                               d.dataUrl ? <img src={d.dataUrl} style={{maxWidth:120,borderRadius:6}} alt="doc"/> :
+                               (d.fileName || '—')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </div>
+        )}
+
+        {/* Modals */}
+        {showUploadModal && (
+          <UploadDocumentModal
+            onClose={()=>setShowUploadModal(false)}
+            onUpload={(doc)=>{ addDocument(doc); setShowUploadModal(false); alert('Uploaded'); }}
+            currentUserId={currentUserId}
+          />
+        )}
+        {showAssignModal && (
+          <AssignLoadModal
+            drivers={drivers}
+            loads={loads}
+            onClose={()=>setShowAssignModal(false)}
+            onAssign={(loadId, driverId) => {
+              setLoads(prev => prev.map(l=> l.id===loadId ? {...l, assignedDriverId: driverId} : l));
+              setShowAssignModal(false);
+              alert('Load assigned');
+            }}
+          />
+        )}
+        {showScheduleModal && (
+          <CreateScheduleModal
+            loads={loads}
+            onClose={()=>setShowScheduleModal(false)}
+            onCreate={(loadId, when) => {
+              setLoads(prev => prev.map(l=> l.id===loadId ? {...l, schedule:{when}} : l));
+              setShowScheduleModal(false);
+              alert('Schedule created');
+            }}
+          />
+        )}
+
+        <div style={{marginTop:18, textAlign:'center', color:'var(--muted)'}}>Demo — not production. Face-match is demo heuristic only.</div>
+      </div>
+    );
+  }
+
+  /**************************************************************************
+   * DriverProfileView
+   **************************************************************************/
+  function DriverProfileView({ driver, editing, onUpdate, onLocationUpdate, onStopLocation }){
+    const [form, setForm] = useState(() => ({ ...driver }));
+    const [idFrontPreview, setIdFrontPreview] = useState(driver?.idDocs?.front || null);
+    const [idBackPreview, setIdBackPreview] = useState(driver?.idDocs?.back || null);
+    const [profilePreview, setProfilePreview] = useState(driver?.profilePicture || null);
+    const [faceMatch, setFaceMatch] = useState(null);
+    const [elapsed, setElapsed] = useState('00:00:00');
+
+    useEffect(()=>{
+      setForm({...driver});
+      setIdFrontPreview(driver?.idDocs?.front || null);
+      setIdBackPreview(driver?.idDocs?.back || null);
+      setProfilePreview(driver?.profilePicture || null);
+    }, [driver?.id]);
+
+    // Status timer
+    useEffect(()=>{
+      let timer;
+      if (driver && driver.statusStartTime) {
+        const start = new Date(driver.statusStartTime).getTime();
+        timer = setInterval(() => {
+          const diff = Date.now() - start;
+          const h = String(Math.floor(diff / 3600000)).padStart(2,'0');
+          const m = String(Math.floor((diff % 3600000) / 60000)).padStart(2,'0');
+          const s = String(Math.floor((diff % 60000) / 1000)).padStart(2,'0');
+          setElapsed(`${h}:${m}:${s}`);
+        }, 1000);
+      } else {
+        setElapsed('00:00:00');
+      }
+      return ()=>clearInterval(timer);
+    }, [driver?.statusStartTime]);
+
+    // run demo face-match when both id front and profile exist
+    useEffect(() => {
+      let cancelled = false;
+      (async () => {
+        if (profilePreview && idFrontPreview) {
+          const result = await compareImagesDemo(profilePreview, idFrontPreview);
+          if (!cancelled) setFaceMatch(result ? 'PASS (demo)' : 'FAIL (demo)');
+        } else {
+          setFaceMatch(null);
+        }
+      })();
+      return ()=>{ cancelled = true; }
+    }, [profilePreview, idFrontPreview]);
+
+    // Handlers
+    const handleProfilePic = async (file) => {
+      if (!file) return;
+      const url = await fileToDataUrl(file);
+      setProfilePreview(url);
+      setForm(prev=>({ ...prev, profilePicture: url }));
+    };
+    const handleIdFront = async (file) => {
+      if (!file) return;
+      const url = await fileToDataUrl(file);
+      setIdFrontPreview(url);
+      setForm(prev=>({ ...prev, idDocs: { ...(prev.idDocs||{}), front: url } }));
+    };
+    const handleIdBack = async (file) => {
+      if (!file) return;
+      const url = await fileToDataUrl(file);
+      setIdBackPreview(url);
+      setForm(prev=>({ ...prev, idDocs: { ...(prev.idDocs||{}), back: url } }));
+    };
+
+    const handleSave = () => {
+      const updates = {
+        ...form,
+        profilePicture: profilePreview,
+        idDocs: { front: idFrontPreview, back: idBackPreview }
+      };
+      onUpdate(updates);
+    };
+
+    function startShareIfNeeded(){
+      if (!navigator.geolocation) return alert('Geolocation not supported in your browser');
+      if (!confirm('Allow sharing your location?')) return;
+      const watcher = navigator.geolocation.watchPosition(pos=>{
+        onLocationUpdate({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      }, err=>{
+        console.warn(err);
+        alert('Unable to read location. Make sure you granted permission.');
+      }, { enableHighAccuracy:true, maximumAge:5000, timeout:10000 });
+      window.__demoGeoWatch = watcher;
+      alert('Sharing started (demo).');
+    }
+
+    return (
+      <div>
+        <div style={{display:'flex',gap:12,alignItems:'center'}}>
+          <div style={{width:84}}>
+            <div style={{width:84,height:84,borderRadius:12,overflow:'hidden',background:'#0b1220',display:'flex',alignItems:'center',justifyContent:'center'}}>
+              {profilePreview ? <img src={profilePreview} alt="profile" style={{width:'100%',height:'100%',objectFit:'cover'}}/> : <div style={{color:'var(--muted)'}}>{driver?.name?.split(' ').map(n=>n[0]).slice(0,2).join('')}</div>}
+            </div>
+            <div style={{marginTop:8}}>
+              <label className="tiny muted">Profile photo</label>
+              <input type="file" accept="image/*" onChange={e=>handleProfilePic(e.target.files[0])} />
+            </div>
+          </div>
+
+          <div style={{flex:1}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'start'}}>
+              <div>
+                <div style={{fontWeight:800,fontSize:'1.15rem'}}>{driver?.name}</div>
+                <div className="muted small">{driver?.truckNumber}</div>
+              </div>
+
+              <div style={{textAlign:'right'}}>
+                <div style={{fontSize:'0.9rem',marginBottom:6}}>
+                  <label className="form-label tiny muted">Driver Status</label><br/>
+                  <select className="form-select" value={driver?.status || 'ACTIVE'} onChange={(e)=>{
+                    const newStatus = e.target.value;
+                    const update = { status: newStatus };
+                    if (newStatus === 'ON_TRIP') update.statusStartTime = new Date().toISOString();
+                    else update.statusStartTime = null;
+                    onUpdate(update);
+                  }}>
+                    <option value="ACTIVE">ACTIVE</option>
+                    <option value="ON_TRIP">ON_TRIP</option>
+                    <option value="OFF_DUTY">OFF_DUTY</option>
+                    <option value="BREAK">BREAK</option>
+                  </select>
+                </div>
+                <div className="tiny muted">Started: {driver?.statusStartTime ? new Date(driver.statusStartTime).toLocaleString() : '—'}</div>
+                <div className="tiny muted">Elapsed: {driver?.statusStartTime ? elapsed : '00:00:00'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style={{marginTop:12}}>
+          <div className="form-row">
+            <div className="form-group">
+              <label className="form-label">Phone</label>
+              <input className="form-input" value={form.phone||''} onChange={e=>setForm({...form, phone:e.target.value})} placeholder="Driver phone"/>
+            </div>
+            <div className="form-group">
+              <label className="form-label">License #</label>
+              <input className="form-input" value={form.licence||''} onChange={e=>setForm({...form, licence:e.target.value})} placeholder="License number"/>
+            </div>
+          </div>
+
+          <div style={{display:'flex',gap:12,marginTop:10}}>
+            <div style={{flex:1}}>
+              <div className="tiny muted">ID Front</div>
+              <div style={{marginTop:6}}>
+                <input type="file" accept="image/*" onChange={e=>handleIdFront(e.target.files[0])} />
+                {idFrontPreview && <div style={{marginTop:8}}><img src={idFrontPreview} style={{maxWidth:'100%',borderRadius:8}} alt="id-front"/></div>}
+              </div>
+            </div>
+
+            <div style={{flex:1}}>
+              <div className="tiny muted">ID Back</div>
+              <div style={{marginTop:6}}>
+                <input type="file" accept="image/*" onChange={e=>handleIdBack(e.target.files[0])} />
+                {idBackPreview && <div style={{marginTop:8}}><img src={idBackPreview} style={{maxWidth:'100%',borderRadius:8}} alt="id-back"/></div>}
+              </div>
+            </div>
+          </div>
+
+          {faceMatch && <div style={{marginTop:10,fontWeight:700}}>{`Face match: ${faceMatch}`} <span className="tiny muted">(demo only)</span></div>}
+
+          <div style={{display:'flex',gap:8,marginTop:12}}>
+            <button className="btn" onClick={handleSave}>Save Profile</button>
+            <button className="btn secondary" onClick={startShareIfNeeded}>Start Location Share</button>
+            <button className="btn secondary" onClick={()=>{ if (confirm('Stop sharing location?')) { if(window.__demoGeoWatch) navigator.geolocation.clearWatch(window.__demoGeoWatch); onStopLocation(); } }}>Stop Sharing</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /**************************************************************************
+   * LiveTracking component (Leaflet)
+   **************************************************************************/
+  function LiveTracking({ drivers, markerLayerRef, mapHeight=420 }){
+    const mapRef = useRef(null);
+    const mapObjRef = useRef(null);
+
+    useEffect(() => {
+      if (mapObjRef.current) return;
+      const map = L.map(mapRef.current, { preferCanvas:true }).setView([39.5, -98], 4);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+      const markerLayer = L.layerGroup().addTo(map);
+      markerLayerRef.current = markerLayer;
+      mapObjRef.current = map;
+    }, []);
+
+    useEffect(()=> {
+      const map = mapObjRef.current;
+      const markerLayer = markerLayerRef.current;
+      if (!map || !markerLayer) return;
+      markerLayer.clearLayers();
+      const bounds = [];
+      drivers.forEach(d => {
+        if (d.lastLocation) {
+          const m = L.marker([d.lastLocation.lat, d.lastLocation.lng]).bindPopup(`<strong>${d.name}</strong><br/>${d.truckNumber}<br/>Status: ${d.status}`);
+          markerLayer.addLayer(m);
+          bounds.push([d.lastLocation.lat, d.lastLocation.lng]);
+        }
+      });
+      if (bounds.length>0){
+        try { map.fitBounds(bounds, { padding:[50,50] }); } catch(e){}
+      }
+    }, [drivers]);
+
+    return <div style={{height:mapHeight}} className="map-container" ref={mapRef}></div>;
+  }
+
+  /**************************************************************************
+   * UploadDocumentModal
+   **************************************************************************/
+  function UploadDocumentModal({ onClose, onUpload, currentUserId }){
+    const [docType, setDocType] = useState('POD');
+    const [file, setFile] = useState(null);
+
+    const doUpload = async () => {
+      if (!file) return alert('Please choose a file');
+      const dataUrl = await fileToDataUrl(file);
+      const doc = {
+        type: docType,
+        uploaderId: currentUserId,
+        fileName: file.name,
+        dataUrl,
+        createdAt: new Date().toISOString(),
+        driverId: currentUserId
+      };
+      onUpload(doc);
+    };
+
+    return (
+      <div className="modal-backdrop">
+        <div className="modal">
+          <h3>Upload Document</h3>
+          <div style={{marginTop:12}}>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Document Type</label>
+                <select className="form-select" value={docType} onChange={e=>setDocType(e.target.value)}>
+                  <option value="POD">POD</option>
+                  <option value="BOL">BOL</option>
+                  <option value="INVOICE">Invoice</option>
+                </select>
+              </div>
+            </div>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">File</label>
+                <input type="file" accept="image/*,application/pdf" onChange={e=>setFile(e.target.files[0])} />
+              </div>
+            </div>
+
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:12}}>
+              <button className="btn secondary" onClick={onClose}>Cancel</button>
+              <button className="btn" onClick={doUpload}>Upload</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /**************************************************************************
+   * AssignLoadModal
+   **************************************************************************/
+  function AssignLoadModal({ drivers, loads, onClose, onAssign }){
+    const [loadId, setLoadId] = useState(loads[0]?.id || '');
+    const [driverId, setDriverId] = useState(drivers[0]?.id || '');
+    return (
+      <div className="modal-backdrop">
+        <div className="modal">
+          <h3>Assign Load</h3>
+          <div style={{marginTop:12}}>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Load</label>
+                <select className="form-select" value={loadId} onChange={e=>setLoadId(e.target.value)}>
+                  {loads.map(l=> <option value={l.id} key={l.id}>{l.title}</option>)}
+                </select>
+              </div>
+              <div className="form-group">
+                <label className="form-label">Driver</label>
+                <select className="form-select" value={driverId} onChange={e=>setDriverId(e.target.value)}>
+                  {drivers.map(d=> <option value={d.id} key={d.id}>{d.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:12}}>
+              <button className="btn secondary" onClick={onClose}>Cancel</button>
+              <button className="btn" onClick={()=>onAssign(loadId, driverId)}>Assign</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /**************************************************************************
+   * CreateScheduleModal
+   **************************************************************************/
+  function CreateScheduleModal({ loads, onClose, onCreate }){
+    const [loadId, setLoadId] = useState(loads[0]?.id || '');
+    const [dateTime, setDateTime] = useState('');
+    return (
+      <div className="modal-backdrop">
+        <div className="modal">
+          <h3>Create Schedule</h3>
+          <div style={{marginTop:12}}>
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">Load</label>
+                <select className="form-select" value={loadId} onChange={e=>setLoadId(e.target.value)}>
+                  {loads.map(l=> <option value={l.id} key={l.id}>{l.title}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="form-row">
+              <div className="form-group">
+                <label className="form-label">When</label>
+                <input type="datetime-local" className="form-input" value={dateTime} onChange={e=>setDateTime(e.target.value)} />
+              </div>
+            </div>
+
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:12}}>
+              <button className="btn secondary" onClick={onClose}>Cancel</button>
+              <button className="btn" onClick={()=>{
+                if(!dateTime) return alert('Choose a date/time');
+                onCreate(loadId, new Date(dateTime).toISOString());
+              }}>Create</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  /**************************************************************************
+   * Render
+   **************************************************************************/
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+
+  </script>
+</body>
+</html>
+
