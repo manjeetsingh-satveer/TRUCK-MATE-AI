@@ -1344,6 +1344,25 @@ function App() {
                 <LoadsView 
                   loads={loads.filter(l => user.role === 'DRIVER' ? l.driverId === user.id : true)}
                   isAdmin={user.role === 'ADMIN'}
+                  drivers={drivers}
+                  onAssignLoad={(loadId, driverId) => {
+                    // Update load assignment
+                    const updatedLoads = loads.map(load => {
+                      if (load.id === loadId) {
+                        return { ...load, driverId: driverId };
+                      }
+                      return load;
+                    });
+                    setLoads(updatedLoads);
+                    
+                    // Get driver info
+                    const driver = drivers.find(d => d.id === driverId);
+                    const load = loads.find(l => l.id === loadId);
+                    
+                    if (driver && load) {
+                      alert(`✅ Load Assigned Successfully!\n\nLoad: ${load.loadNumber}\nDriver: ${driver.name}\nTruck: ${driver.truckNumber}\n\nThe driver has been notified.`);
+                    }
+                  }}
                 />
               )}
 
@@ -2741,7 +2760,15 @@ function AdminSignupPage({ onSignup, onGoToLogin }) {
       );
     }
 
-    function LoadsView({ loads, isAdmin }) {
+    function LoadsView({ loads, isAdmin, drivers, onAssignLoad }) {
+      const [showAssignModal, setShowAssignModal] = useState(false);
+      const [selectedLoad, setSelectedLoad] = useState(null);
+      
+      const handleAssignClick = (load) => {
+        setSelectedLoad(load);
+        setShowAssignModal(true);
+      };
+      
       return (
         <div>
           <h1 style={{marginBottom: '2rem', fontSize: '2rem', fontWeight: 900}}>
@@ -2754,6 +2781,7 @@ function AdminSignupPage({ onSignup, onGoToLogin }) {
                 <tr>
                   <th>Load #</th>
                   <th>Route</th>
+                  {isAdmin && <th>Assigned Driver</th>}
                   <th>Distance</th>
                   <th>Pay</th>
                   <th>Status</th>
@@ -2761,26 +2789,228 @@ function AdminSignupPage({ onSignup, onGoToLogin }) {
                 </tr>
               </thead>
               <tbody>
-                {loads.map(load => (
-                  <tr key={load.id}>
-                    <td><strong>{load.loadNumber}</strong></td>
-                    <td>{load.pickupLocation} → {load.deliveryLocation}</td>
-                    <td>{load.distance} mi</td>
-                    <td style={{color: 'var(--success)', fontWeight: 700}}>${load.estimatedPay}</td>
-                    <td><span className={`badge badge-${load.status.toLowerCase()}`}>{load.status}</span></td>
-                    <td>
-                      <button 
-                        className="btn btn-outline"
-                        onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(load.pickupAddress)}&destination=${encodeURIComponent(load.deliveryAddress)}&travelmode=driving`, '_blank')}
-                        style={{padding: '0.5rem 1rem', fontSize: '0.875rem'}}
-                      >
-                        Navigate
-                      </button>
-                    </td>
-                  </tr>
-                ))}
+                {loads.map(load => {
+                  const assignedDriver = drivers?.find(d => d.id === load.driverId);
+                  return (
+                    <tr key={load.id}>
+                      <td><strong>{load.loadNumber}</strong></td>
+                      <td>{load.pickupLocation} → {load.deliveryLocation}</td>
+                      {isAdmin && (
+                        <td>
+                          {assignedDriver ? (
+                            <div>
+                              <strong>{assignedDriver.name}</strong>
+                              <div style={{fontSize: '0.875rem', color: 'var(--text-muted)'}}>
+                                {assignedDriver.truckNumber}
+                              </div>
+                            </div>
+                          ) : (
+                            <span style={{color: 'var(--text-muted)', fontStyle: 'italic'}}>Unassigned</span>
+                          )}
+                        </td>
+                      )}
+                      <td>{load.distance} mi</td>
+                      <td style={{color: 'var(--success)', fontWeight: 700}}>${load.estimatedPay}</td>
+                      <td><span className={`badge badge-${load.status.toLowerCase()}`}>{load.status}</span></td>
+                      <td>
+                        <div style={{display: 'flex', gap: '0.5rem', flexWrap: 'wrap'}}>
+                          {isAdmin && (
+                            <button 
+                              className="btn btn-primary"
+                              onClick={() => handleAssignClick(load)}
+                              style={{padding: '0.5rem 1rem', fontSize: '0.875rem'}}
+                            >
+                              {assignedDriver ? '🔄 Reassign' : '👤 Assign'}
+                            </button>
+                          )}
+                          <button 
+                            className="btn btn-outline"
+                            onClick={() => window.open(`https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(load.pickupAddress)}&destination=${encodeURIComponent(load.deliveryAddress)}&travelmode=driving`, '_blank')}
+                            style={{padding: '0.5rem 1rem', fontSize: '0.875rem'}}
+                          >
+                            🗺️ Navigate
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
+          </div>
+          
+          {showAssignModal && selectedLoad && (
+            <AssignLoadModal 
+              load={selectedLoad}
+              drivers={drivers}
+              currentDriverId={selectedLoad.driverId}
+              onClose={() => {
+                setShowAssignModal(false);
+                setSelectedLoad(null);
+              }}
+              onAssign={(driverId) => {
+                onAssignLoad(selectedLoad.id, driverId);
+                setShowAssignModal(false);
+                setSelectedLoad(null);
+              }}
+            />
+          )}
+        </div>
+      );
+    }
+
+    function AssignLoadModal({ load, drivers, currentDriverId, onClose, onAssign }) {
+      const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId || '');
+      const [searchTerm, setSearchTerm] = useState('');
+      
+      // Filter drivers by search term and status
+      const availableDrivers = drivers.filter(d => 
+        d.status === 'ACTIVE' && (
+          d.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          d.truckNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          d.email.toLowerCase().includes(searchTerm.toLowerCase())
+        )
+      );
+      
+      const handleSubmit = (e) => {
+        e.preventDefault();
+        if (selectedDriverId) {
+          onAssign(selectedDriverId);
+        }
+      };
+      
+      return (
+        <div className="modal-overlay" onClick={onClose}>
+          <div className="modal" onClick={e => e.stopPropagation()} style={{maxWidth: '600px'}}>
+            <div className="modal-header">
+              <h3 className="modal-title">👤 Assign Load to Driver</h3>
+              <button className="modal-close" onClick={onClose}>×</button>
+            </div>
+            
+            <form onSubmit={handleSubmit}>
+              <div className="modal-body">
+                {/* Load Info */}
+                <div style={{
+                  background: 'linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%)',
+                  border: '2px solid var(--primary)',
+                  borderRadius: '8px',
+                  padding: '1rem',
+                  marginBottom: '1.5rem'
+                }}>
+                  <h4 style={{color: 'var(--primary)', marginBottom: '0.5rem', fontWeight: 700}}>
+                    Load: {load.loadNumber}
+                  </h4>
+                  <div style={{fontSize: '0.95rem', lineHeight: 1.6}}>
+                    <div><strong>Route:</strong> {load.pickupLocation} → {load.deliveryLocation}</div>
+                    <div><strong>Distance:</strong> {load.distance} miles</div>
+                    <div><strong>Pay:</strong> <span style={{color: 'var(--success)', fontWeight: 700}}>${load.estimatedPay}</span></div>
+                    <div><strong>Status:</strong> <span className={`badge badge-${load.status.toLowerCase()}`}>{load.status}</span></div>
+                  </div>
+                </div>
+                
+                {/* Search Drivers */}
+                <div className="form-group">
+                  <label className="form-label">🔍 Search Drivers</label>
+                  <input
+                    type="text"
+                    className="form-input"
+                    placeholder="Search by name, truck number, or email..."
+                    value={searchTerm}
+                    onChange={(e) => setSearchTerm(e.target.value)}
+                  />
+                </div>
+                
+                {/* Driver Selection */}
+                <div className="form-group">
+                  <label className="form-label">Select Driver ({availableDrivers.length} available)</label>
+                  <div style={{
+                    maxHeight: '300px',
+                    overflowY: 'auto',
+                    border: '2px solid var(--border)',
+                    borderRadius: '8px',
+                    padding: '0.5rem'
+                  }}>
+                    {availableDrivers.length === 0 ? (
+                      <div style={{padding: '2rem', textAlign: 'center', color: 'var(--text-muted)'}}>
+                        No active drivers found
+                      </div>
+                    ) : (
+                      availableDrivers.map(driver => (
+                        <div
+                          key={driver.id}
+                          onClick={() => setSelectedDriverId(driver.id)}
+                          style={{
+                            padding: '1rem',
+                            margin: '0.5rem 0',
+                            border: `2px solid ${selectedDriverId === driver.id ? 'var(--primary)' : 'var(--border)'}`,
+                            background: selectedDriverId === driver.id ? '#dbeafe' : 'white',
+                            borderRadius: '8px',
+                            cursor: 'pointer',
+                            transition: 'all 0.2s'
+                          }}
+                        >
+                          <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'start'}}>
+                            <div style={{flex: 1}}>
+                              <div style={{fontWeight: 700, fontSize: '1.1rem', marginBottom: '0.25rem'}}>
+                                {driver.name}
+                                {selectedDriverId === driver.id && (
+                                  <span style={{marginLeft: '0.5rem', color: 'var(--primary)'}}>✓</span>
+                                )}
+                              </div>
+                              <div style={{fontSize: '0.875rem', color: 'var(--text-muted)', lineHeight: 1.5}}>
+                                <div>🚛 Truck: {driver.truckNumber}</div>
+                                <div>📧 {driver.email}</div>
+                                <div>
+                                  {driver.currentStatus === 'DRIVING' && <span style={{color: 'var(--primary)'}}>🚛 Currently Driving</span>}
+                                  {driver.currentStatus === 'ON_BREAK' && <span style={{color: 'var(--warning)'}}>☕ On Break</span>}
+                                  {driver.currentStatus === 'SLEEPING' && <span style={{color: 'var(--success)'}}>😴 Sleeping</span>}
+                                  {(!driver.currentStatus || driver.currentStatus === 'OFF_DUTY') && <span style={{color: 'var(--text-muted)'}}>🏠 Off Duty</span>}
+                                </div>
+                              </div>
+                            </div>
+                            {driver.locationSharing && (
+                              <div style={{
+                                background: 'var(--success)',
+                                color: 'white',
+                                padding: '0.25rem 0.75rem',
+                                borderRadius: '12px',
+                                fontSize: '0.75rem',
+                                fontWeight: 600
+                              }}>
+                                📍 GPS ON
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+                
+                {selectedDriverId && (
+                  <div className="alert alert-success" style={{marginTop: '1rem'}}>
+                    <span>✅</span>
+                    <div>
+                      <strong>Ready to assign</strong>
+                      <div style={{fontSize: '0.875rem', marginTop: '0.25rem'}}>
+                        {availableDrivers.find(d => d.id === selectedDriverId)?.name} will be notified immediately
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div className="modal-footer">
+                <button type="button" className="btn btn-outline" onClick={onClose}>Cancel</button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary" 
+                  disabled={!selectedDriverId}
+                >
+                  {currentDriverId ? '🔄 Reassign Load' : '✅ Assign Load'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       );
@@ -4193,3 +4423,4 @@ function DriversView({ drivers, onAddDriver, onViewDriver }) {
   </script>
 </body>
 </html>
+
